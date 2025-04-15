@@ -1,0 +1,204 @@
+---
+title: "Arkesh Das CMSE 410 Semester Project"
+author: "Arkesh Das"
+date: "03/30/2025"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    includes:
+      in_header: preamble.tex
+fontsize: 12pt
+mainfont: Times New Roman
+linestretch: 2
+---
+# Applying different methods of controlling the False Discovery Rate to 
+
+##Background 
+
+###What is GWAS and FDR
+
+### Et al
+
+The data that I have chosen to analyze comes from a study that is part of Milieu Intérieur the project. The Milieu Intérieur Project aims at 
+
+Study Cohort (Milieu Intérieur)
+Participants: 1000 healthy adults (500 men, 500 women), ages 20–69 (200 per decade).
+Geographic/Ancestral Background: All had self-reported Metropolitan French origin (parents and grandparents born in continental France) to minimize genetic substructure.
+Health Status: Individuals were stringently screened (e.g., no chronic infections, no ongoing hepatitis B/C, HIV-negative).
+Sample Collection and Measurements
+Blood Draw: Peripheral blood was collected into tubes containing lithium heparin (for plasma-based assays) and EDTA (for DNA extraction).
+Immunoglobulin Measurements:
+Total IgG, IgM, IgA, and IgE were measured from serum/plasma using clinical-grade turbidimetric tests.
+Pathogen-Specific IgG: They assayed 15 different antigens from common viruses and bacteria (e.g., CMV, EBV, HSV-1/2, VZV, H. pylori, T. gondii, influenza A) plus vaccine-related antigens (measles, mumps, rubella, and hepatitis B). Each was measured via clinical-grade serologies, yielding both a seropositivity status and (for positives) a quantitative IgG level.
+Genotyping and Genetic Analysis
+Arrays: DNA was genotyped using (1) the Illumina HumanOmniExpress-24 (for ~700k SNPs) and (2) the HumanExome-12 (for ~245k exonic variants).
+Imputation and Quality Control: The authors imputed to a reference panel (Haplotype Reference Consortium), resulting in ~5 million common variants for genome-wide association tests. They also analyzed variation in the HLA region (including HLA alleles and amino-acid positions) and KIR genes.
+What They Were Looking For
+Primary Goal: Understand the variability in humoral immune responses (who tests positive for each antigen, and at what antibody levels) and assess how age, sex, and host genetics (especially in the HLA region) shape these differences.
+Analyses:
+Logistic regressions for seropositivity (positive vs. negative).
+Linear regressions for log-transformed antibody levels among seropositive donors.
+Associations were tested genome-wide, with corrections for false discovery and potential confounders (age, sex, and other covariates).
+Key Findings (High-Level)
+Age and Sex: Strong predictors of whether a person was seropositive and at what level of IgG. Generally, older donors and women had higher rates of positivity and/or higher antibody titers for many antigens.
+Genetics: Variants in the HLA class II region were significantly associated with IgG levels to EBV and rubella. Certain KIR–HLA combinations associated with total IgA levels.
+
+#Loading in the Data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message= FALSE, warning=TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r data}
+df <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/CMSE-410-Semester-Project/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+colnames(df) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+head(df)
+df2 <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/CMSE-410-Semester-Project/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE, nrows = 1000)
+colnames(df2) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+head(df2)
+
+set.seed(03302025)  # Setting seed for reproducibility (optional)
+df3 <- df[sample(nrow(df), 100000), ]
+
+colnames(df3) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+head(df3)
+```
+
+#Creating a Manhattan Plot
+
+```{r manhattan plot w/0.05}
+# 1. Clean the chromosome column and convert it to character; also convert POS to numeric.
+df3 <- df3 %>%
+  mutate(CHR = as.character(gsub("chr", "", `#CHROM`)),
+         BP = as.numeric(POS))
+
+# 2. Sort the data frame by chromosome and position.
+df3 <- df3 %>% arrange(as.numeric(CHR), BP)
+
+# 3. Create a summary data frame for each chromosome to get the maximum position.
+df_chr <- df3 %>% 
+  group_by(CHR) %>% 
+  summarise(max_bp = max(BP)) %>%
+  arrange(as.numeric(CHR))
+
+# 4. Define the cumulative offset for each chromosome.
+df_chr <- df_chr %>%
+  mutate(cumulative = cumsum(max_bp) - max_bp)
+
+# Optional: print df_chr to confirm that the "cumulative" column is created.
+print(df_chr)
+
+# 5. Merge the cumulative offset into the main data frame.
+#     (We select only CHR and cumulative from df_chr to join.)
+df3 <- df3 %>% 
+  left_join(df_chr %>% select(CHR, cumulative), by = "CHR")
+
+# Debug step: check if "cumulative" is now a column in df3.
+print(names(df3))
+# Also check if there are any NA values in cumulative:
+if(any(is.na(df3$cumulative))) {
+  warning("Some rows have NA for cumulative; please check that CHR values match between df3 and df_chr.")
+}
+
+# 6. Define the cumulative base pair position for each SNP.
+df3 <- df3 %>% mutate(BP_cum = BP + cumulative)
+
+# 7. Calculate the center position for each chromosome for x-axis labels.
+axis_df <- df3 %>% 
+  group_by(CHR) %>% 
+  summarise(center = (min(BP_cum) + max(BP_cum)) / 2)
+
+# 8. Create a color vector for the chromosomes.
+chroms <- sort(unique(df3$CHR))
+chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
+names(chrom_colors) <- chroms
+
+# 9. Create the Manhattan plot using the manual color scale with the new color vector,
+#    and add a horizontal line at -log10(0.05)
+ggplot(df3, aes(x = BP_cum, y = -log10(P))) +
+  geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
+  scale_color_manual(values = chrom_colors) +
+  scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
+  labs(x = "Chromosome", 
+       y = expression(-log[10](p-value)), 
+       title = "Manhattan Plot of Raw P-values for 100,000 SNPs") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.border = element_blank(),
+        panel.grid.major.x = element_blank())
+
+
+```
+
+#Various FDR methods
+
+```{r Benjamini-Hochberg test}
+# Step 2: Adjust p-values using the Benjamini-Hochberg method
+df2$P_adj <- p.adjust(df2$P, method = "BH")
+
+# Step 3: Get a summary of adjusted p-values
+summary(df2$P_adj)
+
+# Step 4: Extract significant associations (adjusted p < 0.05)
+significant_hits <- subset(df2, P_adj < 0.05)
+# Alternatively:
+# significant_hits <- df[df$P_adj < 0.05, ]
+
+# Step 5: Sort significant hits by P_adj
+significant_hits <- significant_hits[order(significant_hits$P_adj), ]
+head(significant_hits)
+
+# Optionally, write the significant hits to a CSV file:
+write.csv(significant_hits, "significant_hits.csv", row.names = FALSE)
+
+```
+
+```{r}
+hist(df2$P, main = "Histogram of Raw P-values", xlab = "P-value", breaks = 50)
+
+# Histogram of adjusted p-values
+hist(df2$P_adj, main = "Histogram of Adjusted P-values", xlab = "Adjusted P-value", breaks = 50)
+
+# QQ-Plot of raw p-values
+qqnorm(df2$P); qqline(df2$P, col="red")
+```
+
+
+```{r normal dist curve}
+# Define x-axis range and compute density
+x <- seq(-4, 4, length.out = 1000)
+y <- dnorm(x)
+
+# Create data frame
+df <- data.frame(x = x, y = y)
+
+# Set significance cutoff for one-tailed p-value = 0.05
+z_cutoff <- qnorm(0.95)  # ~1.645 for one-sided test
+
+# Data to shade beyond the cutoff
+shade_df <- subset(df, x > z_cutoff)
+
+# Plot
+ggplot(df, aes(x, y)) +
+  geom_line(color = "black", size = 1) +  # Normal curve
+  geom_area(data = shade_df, aes(x, y), fill = "skyblue", alpha = 0.6) +  # Shaded tail
+  geom_vline(xintercept = z_cutoff, color = "red", linetype = "dashed", size = 1) +  # Significance line
+  labs(
+    title = "Standard Normal Distribution with One-Sided p = 0.05 Cutoff",
+    x = "Z-score",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+```
+
+#References
+[1] https://www.milieuinterieur.fr/en/about-us/the-milieu-interieur/
