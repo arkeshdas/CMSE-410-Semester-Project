@@ -1,0 +1,30 @@
+# Ignore large GWAS file (too big to upload)
+HBV_HBc_GWAS_serostatus.txt
+
+# macOS system files
+.DS_Store
+
+# R-related files
+.Rhistory
+.RData
+.Rproj.user/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+*.venv
+env/
+venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VSCode settings
+.vscode/
+
+# Temporary files
+*.log
+*.tmp
