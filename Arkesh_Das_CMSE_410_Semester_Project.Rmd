@@ -56,28 +56,32 @@ library(dplyr)
 library(ggplot2)
 ```
 
+#Reading in the Data and making dataframes
 ```{r dataframes}
 
 #df will contain all of the data from the study
-#df2 is 1,000 snps, used to test code chunks before running on larger dataframes
-#df3 contains 100,000 random snps, used as an analogue for the entire dataset
+#df2 is 1,000 snps, used to test code chunks before running on larger data frames
+#df3 contains 100,000 random snps, used as an analogue for the entire data set
 #ch6 contains the 354095 snps identified on chromosome 6
 
-df <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+#reloading the df dataframe takes a long time because of the number of oberservaions 
+df <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE)
 colnames(df) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
 head(df)
+
 df2 <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE, nrows = 1000)
 colnames(df2) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
 head(df2)
 
-set.seed(03302025)  # Setting seed for reproducibility 
+set.seed(03302025)  # Setting seed for reproducibility for df3
 df3 <- df[sample(nrow(df), 100000), ]
-
+colnames(df3) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+head(df3)
 
 ch6 <- df %>% filter(`#CHROM` == 6)
 
-colnames(df3) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
-head(df3)
+colnames(ch6) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+head(ch6)
 ```
 
 #Creating Manhattan Plots
