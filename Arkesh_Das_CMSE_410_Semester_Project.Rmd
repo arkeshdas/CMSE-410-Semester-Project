@@ -56,18 +56,19 @@ library(tidyr)
 library(dplyr)
 library(ggplot2)
 library(qqman)
-
+library(mutoss)
 ```
 
 # Reading in the Data and making dataframes
+
 ```{r dataframes}
 
-#df will contain all of the data from the study
+#df will contain all of the data from the study that had MAF > 5%
 #df2 is 1,000 snps, used to test code chunks before running on larger data frames
 #df3 contains 100,000 random snps, used as an analogue for the entire data set
 #ch6 contains the 354095 snps identified on chromosome 6
 
-#reloading the df dataframe takes a long time because of the number of oberservaions 
+#reloading the 'df' dataframe takes a long time because of the number of observations 
 df <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE)
 colnames(df) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
 head(df)
@@ -156,13 +157,13 @@ generate_manhattan_plot(df3, pval_cutoff = 0.05, plot_title = "Manhattan Plot of
 
 However, after doing some research, I learned there are already existing functions that create Manhattan plots (`qqman` library), so I will be using this function to create my Manhattan plots instead [2].
 
-```{r qqman 100k 0.05}
-
+```{r qqman 100k Bonferroni}
 df3_clean <- df3 %>%
   filter(!is.na(P))
-manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P",
-          genomewideline = -log10(0.05)) 
-title(main = "Manhattan Plot of Raw P-values for 100,000 SNPs p = 0.05")
+manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", suggestiveline = FALSE,
+          genomewideline = -log10(2.7e-09), ylim = c(0, 10)) 
+title(main = "Manhattan Plot of Raw P-values for 100,000 SNPs Bonferroni")
+abline(h = -log10(9.5e-09), col = "darkgreen", lty = 3)
 
 ```
 
@@ -174,9 +175,46 @@ manhattan(ch6_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", highlight 
           genomewideline = -log10(0.05), ylim = c(0, 6)) 
 title(main = "Manhattan Plot of Raw P-values for Chr. 6 SNPs p = 0.05")
 ```
+# QQ plots
+
+I tried to create my code to create a QQ plot before I realzed that there already is one in `qqman`
+
+```{r QQ plot for subset}
+pvals <- df3$P
+pvals <- pvals[!is.na(pvals)]
+
+n <- length(pvals)
+
+expected <- -log10(ppoints(n))
+observed <- -log10(sort(pvals))
+
+plot(expected, observed,
+     pch = 19,
+     col = rgb(0, 0, 0, 0.5),
+     cex = 0.6,
+     xlab = "Expected -log10(p)",
+     ylab = "Observed -log10(p)",
+     main = "QQ Plot of GWAS P-values")
+
+abline(0, 1, col = "red", lwd = 2)
 
 
-#Various FDR methods
+```
+
+```{r qqplot 100k}
+qq(df3_clean$P, main = "QQ Plot of GWAS P-values for 100k SNPs")
+```
+
+```{r qqplot chr6}
+qq(ch6_clean$P, main = "QQ Plot of GWAS P-values for Chr. 6")
+```
+
+# Various FDR methods
+
+
+Now I will be trying different FDR methods
+
+## Benjamini-Hochberg
 
 ```{r Benjamini-Hochberg test}
 # Step 2: Adjust p-values using the Benjamini-Hochberg method
@@ -196,7 +234,16 @@ head(significant_hits)
 
 ```
 
-```{r}
+## Benjamini-Yekutieli
+
+## Benjamini-Krieger-Yekutieli 
+
+## Storey-Tibshirani (q-value)
+
+#Misc graphs
+
+
+```{r normal distribution testing}
 df3_clean$logP <- -log10(df3_clean$P)
 
 
@@ -215,36 +262,6 @@ ggplot(df3_clean, aes(x = -log10(P))) +
 
 ```
 
-```{r QQ plot for subset}
-# Remove NA p-values
-pvals <- df3$P
-pvals <- pvals[!is.na(pvals)]
-
-# Number of valid p-values
-n <- length(pvals)
-
-# Expected and observed -log10(p)
-expected <- -log10(ppoints(n))
-observed <- -log10(sort(pvals))
-
-# Plot
-plot(expected, observed,
-     pch = 19,
-     col = rgb(0, 0, 0, 0.5),
-     cex = 0.6,
-     xlab = "Expected -log10(p)",
-     ylab = "Observed -log10(p)",
-     main = "QQ Plot of GWAS P-values")
-
-# Add 1:1 line
-abline(0, 1, col = "red", lwd = 2)
-
-
-```
-
-
-
-#Misc graphs
 ```{r normal dist curve}
 #To create figure in slide deck
 x <- seq(-4, 4, length.out = 1000)
@@ -273,4 +290,12 @@ ggplot(df_norm, aes(x, y)) +
 # References
 
 [1] https://www.milieuinterieur.fr/en/about-us/the-milieu-interieur/
-[2] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan 
+
+[2] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan
+
+[3] Benjamini, Y., Krieger, A. M., & Yekutieli, D. (2006). Adaptive Linear Step-up Procedures That Control the False Discovery Rate. Biometrika, 93(3), 491–507. http://www.jstor.org/stable/20441303
+
+[4] Storey JD, Tibshirani R. Statistical significance for genomewide studies. Proc Natl Acad Sci U S A. 2003 Aug 5;100(16):9440-5. doi: 10.1073/pnas.1530509100. Epub 2003 Jul 25. PMID: 12883005; PMCID: PMC170937.
+
+[5]
+
