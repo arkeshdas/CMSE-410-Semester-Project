@@ -13,37 +13,24 @@ mainfont: Times New Roman
 monofont: Courier New
 linestretch: 2
 ---
-# Applying different methods of controlling the False Discovery Rate to 
+# Assessing the Influence of False Discovery Rate Methods on Genetic Associations in an Immune Response GWAS
 
 ## Background 
 
-### What is GWAS and FDR
+Genome-wide association studies (GWAS) have emerged as powerful tools for linking genetic variants with complex traits, including immune responses. A typical GWAS involves testing millions of single nucleotide polymorphisms (SNPs) for associations, which leads to a substantial multiple testing burden. Applying a simple p-value threshold (e.g., 0.05) is inadequate, as it would generate many false positives. Thus, false discovery rate (FDR) control has become an essential strategy to address this challenge.
 
-### Et al
 
-The data that I have chosen to analyze comes from a study that is part of Milieu Intérieur the project [1]. The Milieu Intérieur Project aims at 
+## About the data
 
-Study Cohort (Milieu Intérieur)
-Participants: 1000 healthy adults (500 men, 500 women), ages 20–69 (200 per decade).
-Geographic/Ancestral Background: All had self-reported Metropolitan French origin (parents and grandparents born in continental France) to minimize genetic substructure.
-Health Status: Individuals were stringently screened (e.g., no chronic infections, no ongoing hepatitis B/C, HIV-negative).
-Sample Collection and Measurements
-Blood Draw: Peripheral blood was collected into tubes containing lithium heparin (for plasma-based assays) and EDTA (for DNA extraction).
-Immunoglobulin Measurements:
-Total IgG, IgM, IgA, and IgE were measured from serum/plasma using clinical-grade turbidimetric tests.
-Pathogen-Specific IgG: They assayed 15 different antigens from common viruses and bacteria (e.g., CMV, EBV, HSV-1/2, VZV, H. pylori, T. gondii, influenza A) plus vaccine-related antigens (measles, mumps, rubella, and hepatitis B). Each was measured via clinical-grade serologies, yielding both a seropositivity status and (for positives) a quantitative IgG level.
-Genotyping and Genetic Analysis
-Arrays: DNA was genotyped using (1) the Illumina HumanOmniExpress-24 (for ~700k SNPs) and (2) the HumanExome-12 (for ~245k exonic variants).
-Imputation and Quality Control: The authors imputed to a reference panel (Haplotype Reference Consortium), resulting in ~5 million common variants for genome-wide association tests. They also analyzed variation in the HLA region (including HLA alleles and amino-acid positions) and KIR genes.
-What They Were Looking For
-Primary Goal: Understand the variability in humoral immune responses (who tests positive for each antigen, and at what antibody levels) and assess how age, sex, and host genetics (especially in the HLA region) shape these differences.
-Analyses:
-Logistic regressions for seropositivity (positive vs. negative).
-Linear regressions for log-transformed antibody levels among seropositive donors.
-Associations were tested genome-wide, with corrections for false discovery and potential confounders (age, sex, and other covariates).
-Key Findings (High-Level)
-Age and Sex: Strong predictors of whether a person was seropositive and at what level of IgG. Generally, older donors and women had higher rates of positivity and/or higher antibody titers for many antigens.
-Genetics: Variants in the HLA class II region were significantly associated with IgG levels to EBV and rubella. Certain KIR–HLA combinations associated with total IgA levels.
+This project utilizes data from the Milieu Intérieur (MI) project, a comprehensive, population-based study coordinated by Prof. Lluis Quintana-Murci and Dr. Darragh Duffy at Institut Pasteur in Paris. Established under the French Government's Investissement d'Avenir – Laboratoire d’Excellence (LabEx) initiative, the MI project aims to dissect the interplay between genetics, environment, and immune variation [1]. 
+
+It was designed to address a critical discrepancy in medicine: while immune responses vary widely among individuals, medical care and therapeutic strategies are often standardized across populations.
+
+ I chose to use this dataset because it offers a unique opportunity to evaluate the impact of false discovery rate methods on GWAS results in the context of immune variation, and the data is high-resolution and well-characterized so it’s ideal for benchmarking statistical methods.
+
+The data was accessed from the NHGRI-EBI GWAS Catalog. The Catalog is a publicly available repository of SNP-trait associations identified in published GWAS studies. It provides standardized annotations, p-values, effect sizes, and sample information for millions of SNPs across hundreds of phenotypes. 
+
+The MI cohort consists of 1,000 healthy individuals, age- and sex-stratified across five decades (ages 20–70), and of french origin. Detailed serological data were collected, including total levels of IgA, IgE, IgG, and IgM, along with antibody responses to 15 antigens from common infectious agents and vaccines (e.g., influenza, EBV, CMV, HSV, rubella). The cohort was genotyped for over 700,000 SNPs and subsequently imputed to yield over 12 million genetic variants. Extensive phenotypic, demographic, clinical, and environmental metadata are also available, including vaccine history, infection exposure, CRP levels, lipid profiles, and lifestyle factors [2]. 
 
 # Loading in the Data
 
@@ -156,13 +143,13 @@ generate_manhattan_plot <- function(df,
 
 ```
 
-```{r testing function}
+```{r testing function, echo = TRUE, message = FALSE, warning = FALSE}
 generate_manhattan_plot(df3, pval_cutoff = 0.05, plot_title = "Manhattan Plot of Raw P-values for 100,000 SNPs")
 ```
 
-However, after doing some research, I learned there are already existing functions that create Manhattan plots (`qqman` library), so I will be using this function to create my Manhattan plots instead [2].
+However, after doing some research, I learned there are already existing functions that create Manhattan plots (`qqman` library), so I will be using this function to create my Manhattan plots instead [3].
 
-```{r qqman 100k Bonferroni}
+```{r qqman 100k Bonferroni, echo = TRUE, message = FALSE, warning = FALSE}
 df3_clean <- df3 %>%
   filter(!is.na(P))
 manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", suggestiveline = FALSE,
@@ -172,7 +159,7 @@ abline(h = -log10(9.5e-09), col = "darkgreen", lty = 3)
 
 ```
 
-```{r qqman ch6 0.05}
+```{r qqman ch6 0.05, echo = TRUE, message = FALSE, warning = FALSE}
 
 ch6_clean <- ch6 %>%
   filter(!is.na(P))
@@ -182,7 +169,7 @@ title(main = "Manhattan Plot of Raw P-values for Chr. 6 SNPs p = 0.05")
 ```
 # QQ plots
 
-I tried to create my code to create a QQ plot before I realzed that there already is one in `qqman`
+I tried to create my code to create a QQ plot before I realized that there already is one in `qqman`
 
 ```{r QQ plot for subset}
 pvals <- df3$P
@@ -206,11 +193,11 @@ abline(0, 1, col = "red", lwd = 2)
 
 ```
 
-```{r qqplot 100k}
+```{r qqplot 100k, echo = TRUE, message = FALSE, warning = FALSE}
 qq(df3_clean$P, main = "QQ Plot of GWAS P-values for 100k SNPs")
 ```
 
-```{r qqplot chr6}
+```{r qqplot chr6, echo = TRUE, message = FALSE, warning = FALSE}
 qq(ch6_clean$P, main = "QQ Plot of GWAS P-values for Chr. 6")
 ```
 
@@ -222,7 +209,7 @@ Now I will be trying different FDR methods, from most to least conservative.
 
 Out of the p-value adjustment methods, Benjamini Yekuteli is the most conservative, so I will try it first. R has a `p.adjust` function that can automatically apply the BY method.
 
-```{r Benjamini-Yekutieli test}
+```{r Benjamini-Yekutieli test, echo = TRUE, message = FALSE, warning = FALSE}
 
 df3_clean$P_BY <- p.adjust(df3_clean$P, method = "BY")
 
@@ -238,7 +225,7 @@ title(main = "Manhattan Plot of BY adjusted P-values for 100,000 SNPs")
 
 I cannot visualize the BY-adjusted p-values using my Manhattan Plot. In this case, I can thankfully modify and re-use my plotting function from earlier:
 
-```{r plot function}
+```{r plot function, echo = TRUE, message = FALSE, warning = FALSE}
 generate_plot <- function(df, 
                                     chrom_col = "#CHROM", 
                                     pos_col = "POS", 
@@ -284,7 +271,7 @@ generate_plot <- function(df,
     geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
     scale_color_manual(values = chrom_colors) +
     scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
-    ylim(0,0.007)+
+    ylim(0,1)+
     labs(x = "Chromosome", 
          y = 'p-value', 
          title = plot_title) +
@@ -296,7 +283,7 @@ generate_plot <- function(df,
 
 ```
 
-```{r BY plot test}
+```{r BY plot test, echo = TRUE, message = FALSE, warning = FALSE}
 generate_plot(df3_clean, pval_col = "P_BY", plot_title = "Plot of BY adjusted P-values for 100,000 SNPs")
 ```
 
@@ -306,7 +293,7 @@ Using my new and improved plotting function, we can see that because the Benjami
 
 Now I will try adjust my p-values using the Benjamini-Hochberg method.
 
-```{r Benjamini-Hochberg test}
+```{r Benjamini-Hochberg test, echo = TRUE, message = FALSE, warning = FALSE}
 # Adjusting p_values using BH
 df3_clean$P_BH <- p.adjust(df3_clean$P, method = "BH")
 
@@ -323,13 +310,13 @@ title(main = "Plot of BH adjusted P-values for 100,000 SNPs")
 ```
 
 
-```{r BH plot test}
+```{r BH plot test, echo = TRUE, message = FALSE, warning = FALSE}
 generate_plot(df3_clean, pval_col = "P_BH", plot_title = "Plot of BH adjusted P-values for 100,000 SNPs")
 ```
 
 ## Benjamini-Krieger-Yekutieli 
 
-Now I will try to use the Benjamini-Krieger-Yekutieli method in the `mutoss` package [3]: 
+Now I will try to use the Benjamini-Krieger-Yekutieli method in the `mutoss` package [4]: 
 ```{r mutoss BKY, eval = FALSE}
 mutoss::loadMethod("BKY")
 
@@ -337,7 +324,7 @@ mutoss::loadMethod("BKY")
 bky_result <- mutoss::runMethod("BKY", list(pValues = df3_clean$P, alpha = 0.05))
 ```
 
-Unfortunately, I could not get the `mutoss` package's implementation of BKY to work, so I will instead follow the original 2006 paper [4], which describes how to implement the BKY method:
+Unfortunately, I could not get the `mutoss` package's implementation of BKY to work, so I will instead follow the original 2006 paper [5], which describes how to implement the BKY method:
 
 ```{r BKY implementation}
 #BYK function
@@ -374,15 +361,15 @@ title(main = "Plot of BKY Adjusted P-values for 100,000 SNPs")
 
 ```
 
-```{r BYK plot test}
-generate_plot(df3_clean, pval_col = "P_BKY", plot_title = "Plot of BH adjusted P-values for 100,000 SNPs")
+```{r BYK plot test, echo = TRUE, message = FALSE, warning = FALSE}
+generate_plot(df3_clean, pval_col = "P_BKY", plot_title = "Plot of BKY adjusted P-values for 100,000 SNPs")
 ```
 This time, I was able to isolate around 300 significant SNPs using the BYK method. However, they were all the same p-value. Therefore, while BYK is able to separate  
 ## Storey-Tibshirani (q-value)
 
-Now I will be adjusting my p-values using the Storey-Tibshirani method. Thankfully, there is a package in R that was designed in collaboration with the creators of this method, the `qvalue` package. I followed the documentation of the `qvalue` package to use the `qvalue()` method and other methods on my data [6].
+Now I will be adjusting my p-values using the Storey-Tibshirani method [6]. Thankfully, there is a package in R that was designed in collaboration with the creators of this method, the `qvalue` package. I followed the documentation of the `qvalue` package to use the `qvalue()` method and other methods on my data [7].
 
-```{r}
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
 qobj <- qvalue(p = df3_clean$P)  # estimating pi_0 and q-values
 df3_clean$q_value <- qobj$qvalues
 
@@ -395,7 +382,7 @@ qobj$pi0
 
 Unfortunately, I was not able to actually find any significant q_values. My pi_0 was 0.971, which means that 97.1% of the tested SNPs are estimated to be null.
 
-```{r best BKYs}
+```{r best BKYs, echo = TRUE, message = FALSE, warning = FALSE}
 top_bky <- df3_clean %>%
   arrange(P) %>%
   slice(1:50) %>%
@@ -408,7 +395,7 @@ Taking a second look at the p-values that were marked as being signficant from B
 SNP POS: 129948488
 #CHROM: 6
 
-I used the NCBI Human Genome Data Viewer [7] to figure out the genomic context of chr6:129948488. This SNP lies within an intron region of L3MBTL3, situated between a nearby HLA class II gene and an uncharacterized gene. L3MBTL3  has been implicated in several GWAS as influencing hematopoietic traits and immunoglobulin A (IgA) levels. Variants in L3MBTL3 have been associated with natural variation in IgA concentrations, suggesting a potential role in humoral immune regulation. These findings suggest that SNPs in or near L3MBTL3 could indirectly modulate immune responses, potentially by influencing the development or regulation of immune effector cells [8].
+I used the NCBI Human Genome Data Viewer [8] to figure out the genomic context of chr6:129948488. This SNP lies within an intron region of L3MBTL3, situated between a nearby HLA class II gene and an uncharacterized gene. L3MBTL3  has been implicated in several GWAS as influencing hematopoietic traits and immunoglobulin A (IgA) levels. Variants in L3MBTL3 have been associated with natural variation in IgA concentrations, suggesting a potential role in humoral immune regulation. These findings suggest that SNPs in or near L3MBTL3 could indirectly modulate immune responses, potentially by influencing the development or regulation of immune effector cells [9].
 
 Therefore, while I was not able to identify a clear enrichment of significant SNPs in known immune loci across the genome, I was able to pinpoint at least one biologically plausible candidate. Its proximity to the HLA region and its known association with immune-related traits make it a promising lead for further investigation. Further analysis of the SNPs that were flagged as being significant by the BKY method should be looked into, as they may represent novel loci of biological relevance that have not yet been characterized in the context of immune response by the original study.
 
@@ -416,7 +403,7 @@ Therefore, while I was not able to identify a clear enrichment of significant SN
 #Misc graphs
 
 
-```{r normal distribution testing}
+```{r normal distribution testing, echo = TRUE, message = FALSE, warning = FALSE}
 df3_clean$logP <- -log10(df3_clean$P)
 
 
@@ -435,7 +422,7 @@ ggplot(df3_clean, aes(x = -log10(P))) +
 
 ```
 
-```{r normal dist curve}
+```{r normal dist curve, echo = TRUE, message = FALSE, warning = FALSE}
 #To create figure in slide deck
 x <- seq(-4, 4, length.out = 1000)
 y <- dnorm(x)
@@ -464,16 +451,18 @@ ggplot(df_norm, aes(x, y)) +
 
 [1] https://www.milieuinterieur.fr/en/about-us/the-milieu-interieur/
 
-[2] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan
+[2]Scepanovic, P., Alanio, C., Hammer, C., et al. (2018). Human genetic variants and age are the strongest predictors of humoral immune responses to common pathogens and vaccines. Genome Medicine, 10, 59. https://doi.org/10.1186/s13073-018-0568-8
 
-[3] https://search.r-project.org/CRAN/refmans/mutoss/html/multiple.down.html
+[3] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan
 
-[4] Benjamini, Y., Krieger, A. M., & Yekutieli, D. (2006). Adaptive Linear Step-up Procedures That Control the False Discovery Rate. Biometrika, 93(3), 491–507. https://doi.org/10.1093/biomet/93.3.491 
+[4] https://search.r-project.org/CRAN/refmans/mutoss/html/multiple.down.html
 
-[5] Storey JD, Tibshirani R. Statistical significance for genomewide studies. Proc Natl Acad Sci U S A. 2003 Aug 5;100(16):9440-5. doi: 10.1073/pnas.1530509100. Epub 2003 Jul 25. PMID: 12883005; PMCID: PMC170937.
+[5] Benjamini, Y., Krieger, A. M., & Yekutieli, D. (2006). Adaptive Linear Step-up Procedures That Control the False Discovery Rate. Biometrika, 93(3), 491–507. https://doi.org/10.1093/biomet/93.3.491 
 
-[6] https://www.rdocumentation.org/packages/qvalue/versions/2.4.2/topics/qvalue
+[6] Storey JD, Tibshirani R. Statistical significance for genomewide studies. Proc Natl Acad Sci U S A. 2003 Aug 5;100(16):9440-5. doi: 10.1073/pnas.1530509100. Epub 2003 Jul 25. PMID: 12883005; PMCID: PMC170937.
 
-[7] https://www.ncbi.nlm.nih.gov/gdv/
+[7] https://www.rdocumentation.org/packages/qvalue/versions/2.4.2/topics/qvalue
 
-[8] Arai S, Miyazaki T. Impaired maturation of myeloid progenitors in mice lacking novel Polycomb group protein MBT-1. EMBO J. 2005 May 18;24(10):1863-73. doi: 10.1038/sj.emboj.7600654 
+[8] https://www.ncbi.nlm.nih.gov/gdv/
+
+[9] Arai S, Miyazaki T. Impaired maturation of myeloid progenitors in mice lacking novel Polycomb group protein MBT-1. EMBO J. 2005 May 18;24(10):1863-73. doi: 10.1038/sj.emboj.7600654 
