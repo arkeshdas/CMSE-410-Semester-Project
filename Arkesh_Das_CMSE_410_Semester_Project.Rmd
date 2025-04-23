@@ -57,6 +57,7 @@ library(dplyr)
 library(ggplot2)
 library(qqman)
 library(mutoss)
+library(qvalue)
 ```
 
 # Reading in the Data and making dataframes
@@ -86,6 +87,10 @@ ch6 <- df %>% filter(`#CHROM` == 6)
 
 colnames(ch6) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
 head(ch6)
+
+df_clean <- df %>%
+  filter(!is.na(P))
+
 ```
 
 # Creating Manhattan Plots
@@ -211,34 +216,202 @@ qq(ch6_clean$P, main = "QQ Plot of GWAS P-values for Chr. 6")
 
 # Various FDR methods
 
-
-Now I will be trying different FDR methods
-
-## Benjamini-Hochberg
-
-```{r Benjamini-Hochberg test}
-# Step 2: Adjust p-values using the Benjamini-Hochberg method
-df2$P_adj <- p.adjust(df2$P, method = "BH")
-
-# Step 3: Get a summary of adjusted p-values
-summary(df2$P_adj)
-
-# Step 4: Extract significant associations (adjusted p < 0.05)
-significant_hits <- subset(df2, P_adj < 0.05)
-# Alternatively:
-# significant_hits <- df[df$P_adj < 0.05, ]
-
-# Step 5: Sort significant hits by P_adj
-significant_hits <- significant_hits[order(significant_hits$P_adj), ]
-head(significant_hits)
-
-```
+Now I will be trying different FDR methods, from most to least conservative.
 
 ## Benjamini-Yekutieli
 
+Out of the p-value adjustment methods, Benjamini Yekuteli is the most conservative, so I will try it first. R has a `p.adjust` function that can automatically apply the BY method.
+
+```{r Benjamini-Yekutieli test}
+
+df3_clean$P_BY <- p.adjust(df3_clean$P, method = "BY")
+
+# Summary stats of BY-adjusted p-values
+summary(df3_clean$P_BY)
+
+# Filter significant results under BY 
+df3_by_sig <- df3_clean %>% filter(P_BY < 0.05)
+
+manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BY", suggestiveline = FALSE, ylim = c(0,1)) 
+title(main = "Manhattan Plot of BY adjusted P-values for 100,000 SNPs")
+```
+
+I cannot visualize the BY-adjusted p-values using my Manhattan Plot. In this case, I can thankfully modify and re-use my plotting function from earlier:
+
+```{r plot function}
+generate_plot <- function(df, 
+                                    chrom_col = "#CHROM", 
+                                    pos_col = "POS", 
+                                    pval_col = "P", 
+                                    plot_title = "Plot") {
+
+  # Step 1: Normalize CHR and BP
+  df <- df %>%
+    mutate(CHR = gsub("chr", "", .data[[chrom_col]], ignore.case = TRUE),
+           CHR = gsub("[^0-9XYMT]", "", CHR),
+           CHR = as.character(CHR),
+           BP = as.numeric(.data[[pos_col]])) %>%
+    filter(!is.na(BP) & !is.na(CHR))
+
+  # Step 2: Sort
+  df <- df %>% arrange(as.numeric(CHR), BP)
+
+  # Step 3: Chromosome summary
+  df_chr <- df %>%
+    group_by(CHR) %>%
+    summarise(max_bp = max(BP, na.rm = TRUE), .groups = "drop") %>%
+    arrange(as.numeric(CHR)) %>%
+    mutate(cumulative = cumsum(max_bp) - max_bp)
+
+  # Step 4: Merge
+  df <- df %>%
+    left_join(df_chr, by = "CHR") %>%
+    filter(!is.na(cumulative)) %>%
+    mutate(BP_cum = BP + cumulative)
+
+  # Step 5: Axis labels
+  axis_df <- df %>%
+    group_by(CHR) %>%
+    summarise(center = (min(BP_cum) + max(BP_cum)) / 2, .groups = "drop")
+
+  # Step 6: Color map
+  chroms <- sort(unique(df$CHR))
+  chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
+  names(chrom_colors) <- chroms
+
+  # Step 7: Plot
+  ggplot(df, aes(x = BP_cum, y = .data[[pval_col]])) +
+    geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
+    scale_color_manual(values = chrom_colors) +
+    scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
+    ylim(0,0.007)+
+    labs(x = "Chromosome", 
+         y = 'p-value', 
+         title = plot_title) +
+    theme_minimal() +
+    theme(legend.position = "none",
+          panel.border = element_blank(),
+          panel.grid.major.x = element_blank())
+}
+
+```
+
+```{r BY plot test}
+generate_plot(df3_clean, pval_col = "P_BY", plot_title = "Plot of BY adjusted P-values for 100,000 SNPs")
+```
+
+Using my new and improved plotting function, we can see that because the Benjamini-Yekutieli method is so conservative, all of the p-values were adjusted to 1.
+
+## Benjamini-Hochberg
+
+Now I will try adjust my p-values using the Benjamini-Hochberg method.
+
+```{r Benjamini-Hochberg test}
+# Adjusting p_values using BH
+df3_clean$P_BH <- p.adjust(df3_clean$P, method = "BH")
+
+#Summary stats of adjusted p-values
+summary(df3_clean$P_BH)
+
+df3_bh_sig <- df3_clean %>% filter(P_BH < 0.05) #there are no significant p-values after BH adjustment 
+df3_clean$log10_P_BH <- -log10(df3_clean$P_BH)
+
+manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BH", suggestiveline = FALSE, ylim = c(0, 0.005)) 
+title(main = "Plot of BH adjusted P-values for 100,000 SNPs")
+
+
+```
+
+
+```{r BH plot test}
+generate_plot(df3_clean, pval_col = "P_BH", plot_title = "Plot of BH adjusted P-values for 100,000 SNPs")
+```
+
 ## Benjamini-Krieger-Yekutieli 
 
+Now I will try to use the Benjamini-Krieger-Yekutieli method in the `mutoss` package [3]: 
+```{r mutoss BKY, eval = FALSE}
+mutoss::loadMethod("BKY")
+
+
+bky_result <- mutoss::runMethod("BKY", list(pValues = df3_clean$P, alpha = 0.05))
+```
+
+Unfortunately, I could not get the `mutoss` package's implementation of BKY to work, so I will instead follow the original 2006 paper [4], which describes how to implement the BKY method:
+
+```{r BKY implementation}
+#BYK function
+bky_adjust <- function(p, alpha = 0.05) {
+  m <- length(p)
+  p_order <- order(p)
+  p_sorted <- p[p_order]
+  k <- m:1
+  c_m <- sum(1 / (1:m))
+  
+  thresh <- (k / m) * (alpha / (1 + alpha)) * (1 / c_m)
+  test <- p_sorted <= thresh
+  max_k <- if (any(test)) max(which(test)) else 0
+  
+  adjusted <- rep(1, m)
+  if (max_k > 0) {
+    adjusted[p_order[1:max_k]] <- pmin(1, thresh[max_k])
+  }
+  
+  return(adjusted)
+}
+
+# Applying BKY to the data
+
+df3_clean$P_BKY <- bky_adjust(df3_clean$P, alpha = 0.05)
+df3_bky_sig <- df3_clean %>% filter(P_BKY < 0.05)
+
+summary(df3_bky_sig$P_BKY)
+
+# Plot
+manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BKY",
+          suggestiveline = FALSE)
+title(main = "Plot of BKY Adjusted P-values for 100,000 SNPs")
+
+```
+
+```{r BYK plot test}
+generate_plot(df3_clean, pval_col = "P_BKY", plot_title = "Plot of BH adjusted P-values for 100,000 SNPs")
+```
+This time, I was able to isolate around 300 significant SNPs using the BYK method. However, they were all the same p-value. Therefore, while BYK is able to separate  
 ## Storey-Tibshirani (q-value)
+
+Now I will be adjusting my p-values using the Storey-Tibshirani method. Thankfully, there is a package in R that was designed in collaboration with the creators of this method, the `qvalue` package. I followed the documentation of the `qvalue` package to use the `qvalue()` method and other methods on my data [6].
+
+```{r}
+qobj <- qvalue(p = df3_clean$P)  # estimating pi_0 and q-values
+df3_clean$q_value <- qobj$qvalues
+
+df3_q_sig <- df3_clean %>% filter(q_value < 0.05)
+nrow(df3_q_sig)  
+
+qobj$pi0
+
+```
+
+Unfortunately, I was not able to actually find any significant q_values. My pi_0 was 0.971, which means that 97.1% of the tested SNPs are estimated to be null.
+
+```{r best BKYs}
+top_bky <- df3_clean %>%
+  arrange(P) %>%
+  slice(1:50) %>%
+  select(`#CHROM`, POS, ID, P, P_BKY)
+
+```
+
+Taking a second look at the p-values that were marked as being signficant from BYK, they appear to be randomly clustered throughout the genome. However, the second most significant SNP is located on chromosome 6, the same chromosome as the HLA gene cluster that was found to be significant in the original study. So, I think to conclude, I will try to figure out where this SNP is located and its potential biological function.
+
+SNP POS: 129948488
+#CHROM: 6
+
+I used the NCBI Human Genome Data Viewer [7] to figure out the genomic context of chr6:129948488. This SNP lies within an intron region of L3MBTL3, situated between a nearby HLA class II gene and an uncharacterized gene. L3MBTL3  has been implicated in several GWAS as influencing hematopoietic traits and immunoglobulin A (IgA) levels. Variants in L3MBTL3 have been associated with natural variation in IgA concentrations, suggesting a potential role in humoral immune regulation. These findings suggest that SNPs in or near L3MBTL3 could indirectly modulate immune responses, potentially by influencing the development or regulation of immune effector cells [8].
+
+Therefore, while I was not able to identify a clear enrichment of significant SNPs in known immune loci across the genome, I was able to pinpoint at least one biologically plausible candidate. Its proximity to the HLA region and its known association with immune-related traits make it a promising lead for further investigation. Further analysis of the SNPs that were flagged as being significant by the BKY method should be looked into, as they may represent novel loci of biological relevance that have not yet been characterized in the context of immune response by the original study.
+
 
 #Misc graphs
 
@@ -293,9 +466,14 @@ ggplot(df_norm, aes(x, y)) +
 
 [2] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan
 
-[3] Benjamini, Y., Krieger, A. M., & Yekutieli, D. (2006). Adaptive Linear Step-up Procedures That Control the False Discovery Rate. Biometrika, 93(3), 491–507. http://www.jstor.org/stable/20441303
+[3] https://search.r-project.org/CRAN/refmans/mutoss/html/multiple.down.html
 
-[4] Storey JD, Tibshirani R. Statistical significance for genomewide studies. Proc Natl Acad Sci U S A. 2003 Aug 5;100(16):9440-5. doi: 10.1073/pnas.1530509100. Epub 2003 Jul 25. PMID: 12883005; PMCID: PMC170937.
+[4] Benjamini, Y., Krieger, A. M., & Yekutieli, D. (2006). Adaptive Linear Step-up Procedures That Control the False Discovery Rate. Biometrika, 93(3), 491–507. https://doi.org/10.1093/biomet/93.3.491 
 
-[5]
+[5] Storey JD, Tibshirani R. Statistical significance for genomewide studies. Proc Natl Acad Sci U S A. 2003 Aug 5;100(16):9440-5. doi: 10.1073/pnas.1530509100. Epub 2003 Jul 25. PMID: 12883005; PMCID: PMC170937.
 
+[6] https://www.rdocumentation.org/packages/qvalue/versions/2.4.2/topics/qvalue
+
+[7] https://www.ncbi.nlm.nih.gov/gdv/
+
+[8] Arai S, Miyazaki T. Impaired maturation of myeloid progenitors in mice lacking novel Polycomb group protein MBT-1. EMBO J. 2005 May 18;24(10):1863-73. doi: 10.1038/sj.emboj.7600654 
