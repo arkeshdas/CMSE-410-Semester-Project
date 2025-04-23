@@ -10,17 +10,18 @@ output:
       in_header: preamble.tex
 fontsize: 12pt
 mainfont: Times New Roman
+monofont: Courier New
 linestretch: 2
 ---
 # Applying different methods of controlling the False Discovery Rate to 
 
-##Background 
+## Background 
 
-###What is GWAS and FDR
+### What is GWAS and FDR
 
 ### Et al
 
-The data that I have chosen to analyze comes from a study that is part of Milieu Intérieur the project. The Milieu Intérieur Project aims at 
+The data that I have chosen to analyze comes from a study that is part of Milieu Intérieur the project [1]. The Milieu Intérieur Project aims at 
 
 Study Cohort (Milieu Intérieur)
 Participants: 1000 healthy adults (500 men, 500 women), ages 20–69 (200 per decade).
@@ -44,7 +45,7 @@ Key Findings (High-Level)
 Age and Sex: Strong predictors of whether a person was seropositive and at what level of IgG. Generally, older donors and women had higher rates of positivity and/or higher antibody titers for many antigens.
 Genetics: Variants in the HLA class II region were significantly associated with IgG levels to EBV and rubella. Certain KIR–HLA combinations associated with total IgA levels.
 
-#Loading in the Data
+# Loading in the Data
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message= FALSE, warning=TRUE)
@@ -54,9 +55,11 @@ library(tidyverse)
 library(tidyr)
 library(dplyr)
 library(ggplot2)
+library(qqman)
+
 ```
 
-#Reading in the Data and making dataframes
+# Reading in the Data and making dataframes
 ```{r dataframes}
 
 #df will contain all of the data from the study
@@ -84,72 +87,94 @@ colnames(ch6) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS
 head(ch6)
 ```
 
-#Creating Manhattan Plots
+# Creating Manhattan Plots
 
-```{r manhattan plot w/0.05 for subset}
-# 1. Clean the chromosome column and convert it to character; also convert POS to numeric.
-df3 <- df3 %>%
-  mutate(CHR = as.character(gsub("chr", "", `#CHROM`)),
-         BP = as.numeric(POS))
+Because I will be making many Manhattan plots, I initially decided to create a function that I can pass parameters into rather than creating a Manhattan plot by hand each time.
 
-# 2. Sort the data frame by chromosome and position.
-df3 <- df3 %>% arrange(as.numeric(CHR), BP)
+```{r manhattan plot function}
+generate_manhattan_plot <- function(df, 
+                                    chrom_col = "#CHROM", 
+                                    pos_col = "POS", 
+                                    pval_col = "P", 
+                                    plot_title = "Manhattan Plot", 
+                                    pval_cutoff = 0.05) {
 
-# 3. Create a summary data frame for each chromosome to get the maximum position.
-df_chr <- df3 %>% 
-  group_by(CHR) %>% 
-  summarise(max_bp = max(BP)) %>%
-  arrange(as.numeric(CHR))
+  # Step 1: Normalize CHR and BP
+  df <- df %>%
+    mutate(CHR = gsub("chr", "", .data[[chrom_col]], ignore.case = TRUE),
+           CHR = gsub("[^0-9XYMT]", "", CHR),
+           CHR = as.character(CHR),
+           BP = as.numeric(.data[[pos_col]])) %>%
+    filter(!is.na(BP) & !is.na(CHR))
 
-# 4. Define the cumulative offset for each chromosome.
-df_chr <- df_chr %>%
-  mutate(cumulative = cumsum(max_bp) - max_bp)
+  # Step 2: Sort
+  df <- df %>% arrange(as.numeric(CHR), BP)
 
-# Optional: print df_chr to confirm that the "cumulative" column is created.
-print(df_chr)
+  # Step 3: Chromosome summary
+  df_chr <- df %>%
+    group_by(CHR) %>%
+    summarise(max_bp = max(BP, na.rm = TRUE), .groups = "drop") %>%
+    arrange(as.numeric(CHR)) %>%
+    mutate(cumulative = cumsum(max_bp) - max_bp)
 
-# 5. Merge the cumulative offset into the main data frame.
-#     (We select only CHR and cumulative from df_chr to join.)
-df3 <- df3 %>% 
-  left_join(df_chr %>% select(CHR, cumulative), by = "CHR")
+  # Step 4: Merge
+  df <- df %>%
+    left_join(df_chr, by = "CHR") %>%
+    filter(!is.na(cumulative)) %>%
+    mutate(BP_cum = BP + cumulative)
 
-# Debug step: check if "cumulative" is now a column in df3.
-print(names(df3))
-# Also check if there are any NA values in cumulative:
-if(any(is.na(df3$cumulative))) {
-  warning("Some rows have NA for cumulative; please check that CHR values match between df3 and df_chr.")
+  # Step 5: Axis labels
+  axis_df <- df %>%
+    group_by(CHR) %>%
+    summarise(center = (min(BP_cum) + max(BP_cum)) / 2, .groups = "drop")
+
+  # Step 6: Color map
+  chroms <- sort(unique(df$CHR))
+  chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
+  names(chrom_colors) <- chroms
+
+  # Step 7: Manhattan Plot
+  ggplot(df, aes(x = BP_cum, y = -log10(.data[[pval_col]]))) +
+    geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
+    scale_color_manual(values = chrom_colors) +
+    scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
+    labs(x = "Chromosome", 
+         y = expression(-log[10](p-value)), 
+         title = plot_title) +
+    geom_hline(yintercept = -log10(pval_cutoff), linetype = "dashed", color = "red") +
+    theme_minimal() +
+    theme(legend.position = "none",
+          panel.border = element_blank(),
+          panel.grid.major.x = element_blank())
 }
 
-# 6. Define the cumulative base pair position for each SNP.
-df3 <- df3 %>% mutate(BP_cum = BP + cumulative)
+```
 
-# 7. Calculate the center position for each chromosome for x-axis labels.
-axis_df <- df3 %>% 
-  group_by(CHR) %>% 
-  summarise(center = (min(BP_cum) + max(BP_cum)) / 2)
+```{r testing function}
+generate_manhattan_plot(df3, pval_cutoff = 0.05, plot_title = "Manhattan Plot of Raw P-values for 100,000 SNPs")
+```
 
-# 8. Create a color vector for the chromosomes.
-chroms <- sort(unique(df3$CHR))
-chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
-names(chrom_colors) <- chroms
+However, after doing some research, I learned there are already existing functions that create Manhattan plots (`qqman` library), so I will be using this function to create my Manhattan plots instead [2].
 
-# 9. Create the Manhattan plot using the manual color scale with the new color vector,
-#    and add a horizontal line at -log10(0.05)
-ggplot(df3, aes(x = BP_cum, y = -log10(P))) +
-  geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
-  scale_color_manual(values = chrom_colors) +
-  scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
-  labs(x = "Chromosome", 
-       y = expression(-log[10](p-value)), 
-       title = "Manhattan Plot of Raw P-values for 100,000 SNPs") +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
-  theme_minimal() +
-  theme(legend.position = "none",
-        panel.border = element_blank(),
-        panel.grid.major.x = element_blank())
+```{r qqman 100k 0.05}
 
+df3_clean <- df3 %>%
+  filter(!is.na(P))
+manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P",
+          genomewideline = -log10(0.05)) 
+title(main = "Manhattan Plot of Raw P-values for 100,000 SNPs p = 0.05")
 
 ```
+
+```{r qqman ch6 0.05}
+
+ch6_clean <- ch6 %>%
+  filter(!is.na(P))
+manhattan(ch6_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", highlight = "rs4254998",
+          genomewideline = -log10(0.05), ylim = c(0, 6)) 
+title(main = "Manhattan Plot of Raw P-values for Chr. 6 SNPs p = 0.05")
+```
+
 
 #Various FDR methods
 
@@ -169,19 +194,25 @@ significant_hits <- subset(df2, P_adj < 0.05)
 significant_hits <- significant_hits[order(significant_hits$P_adj), ]
 head(significant_hits)
 
-# Optionally, write the significant hits to a CSV file:
-write.csv(significant_hits, "significant_hits.csv", row.names = FALSE)
-
 ```
 
 ```{r}
-hist(df2$P, main = "Histogram of Raw P-values", xlab = "P-value", breaks = 50)
+df3_clean$logP <- -log10(df3_clean$P)
 
-# Histogram of adjusted p-values
-hist(df2$P_adj, main = "Histogram of Adjusted P-values", xlab = "Adjusted P-value", breaks = 50)
 
-# QQ-Plot of raw p-values
-qqnorm(df3$P); qqline(df3$P, col="red")
+ggplot(df3_clean, aes(x = -log10(P))) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "white") +
+  labs(title = "Distribution of –log10(P-values)",
+       x = "–log10(P-value)", y = "Count") +xlim(0, 4) 
+  theme_minimal()
+
+
+ggplot(df3_clean, aes(x = -log10(P))) +
+  geom_histogram(bins = 50, fill = "skyblue", color = "white") +
+  labs(title = "Distribution of –log10(P-values)",
+       x = "–log10(P-value)", y = "Count") +xlim(2, 4) 
+  theme_minimal()
+
 ```
 
 ```{r QQ plot for subset}
@@ -212,25 +243,24 @@ abline(0, 1, col = "red", lwd = 2)
 ```
 
 
+
+#Misc graphs
 ```{r normal dist curve}
-# Define x-axis range and compute density
+#To create figure in slide deck
 x <- seq(-4, 4, length.out = 1000)
 y <- dnorm(x)
 
-# Create data frame
-df <- data.frame(x = x, y = y)
+df_norm <- data.frame(x = x, y = y)
 
-# Set significance cutoff for one-tailed p-value = 0.05
-z_cutoff <- qnorm(0.95)  # ~1.645 for one-sided test
+z_cutoff <- qnorm(0.95)  
 
-# Data to shade beyond the cutoff
-shade_df <- subset(df, x > z_cutoff)
+shade_df <- subset(df_norm, x > z_cutoff)
 
-# Plot
-ggplot(df, aes(x, y)) +
+
+ggplot(df_norm, aes(x, y)) +
   geom_line(color = "black", size = 1) +  # Normal curve
-  geom_area(data = shade_df, aes(x, y), fill = "skyblue", alpha = 0.6) +  # Shaded tail
-  geom_vline(xintercept = z_cutoff, color = "red", linetype = "dashed", size = 1) +  # Significance line
+  geom_area(data = shade_df, aes(x, y), fill = "skyblue", alpha = 0.6) + 
+  geom_vline(xintercept = z_cutoff, color = "red", linetype = "dashed", size = 1) +  
   labs(
     title = "Standard Normal Distribution with One-Sided p = 0.05 Cutoff",
     x = "Z-score",
@@ -240,5 +270,7 @@ ggplot(df, aes(x, y)) +
 
 ```
 
-#References
+# References
+
 [1] https://www.milieuinterieur.fr/en/about-us/the-milieu-interieur/
+[2] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan 
