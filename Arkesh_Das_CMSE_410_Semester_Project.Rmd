@@ -30,12 +30,12 @@ It was designed to address a critical discrepancy in medicine: while immune resp
 
 The data was accessed from the NHGRI-EBI GWAS Catalog. The Catalog is a publicly available repository of SNP-trait associations identified in published GWAS studies. It provides standardized annotations, p-values, effect sizes, and sample information for millions of SNPs across hundreds of phenotypes. 
 
-The MI cohort consists of 1,000 healthy individuals, age- and sex-stratified across five decades (ages 20–70), and of french origin. Detailed serological data were collected, including total levels of IgA, IgE, IgG, and IgM, along with antibody responses to 15 antigens from common infectious agents and vaccines (e.g., influenza, EBV, CMV, HSV, rubella). The cohort was genotyped for over 700,000 SNPs and subsequently imputed to yield over 12 million genetic variants. Extensive phenotypic, demographic, clinical, and environmental metadata are also available, including vaccine history, infection exposure, CRP levels, lipid profiles, and lifestyle factors [2]. 
+The MI cohort consists of 1,000 healthy individuals, age- and sex-stratified across five decades (ages 20-70), and of French origin. Detailed serological data were collected, including total levels of IgA, IgE, IgG, and IgM, along with antibody responses to 15 antigens from common infectious agents and vaccines (e.g., influenza, EBV, CMV, HSV, rubella). The cohort was genotyped for over 700,000 SNPs and subsequently imputed to yield over 12 million genetic variants. Extensive phenotypic, demographic, clinical, and environmental metadata are also available, including vaccine history, infection exposure, CRP levels, lipid profiles, and lifestyle factors [2].
 
 # Loading in the Data
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message= FALSE, warning=TRUE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 knitr::opts_chunk$set(fig.width=12, fig.height=8) 
 
 library(tidyverse)
@@ -56,7 +56,7 @@ theme_gwas <- function(base_size = 12) {
 
 # Reading in the Data and making dataframes
 
-```{r dataframes}
+```{r dataframes, include=FALSE}
 
 #df will contain all of the data from the study that had MAF > 5%
 #df2 is 1,000 snps, used to test code chunks before running on larger data frames
@@ -76,8 +76,15 @@ if (!file.exists(data_path)) {
 }
 
 # Reloading the full dataframe takes a long time because of the number of observations.
-df <- read.table(data_path, header = FALSE, sep = "", stringsAsFactors = FALSE)
-colnames(df) <- gwas_cols
+df <- read.table(data_path, header = TRUE, sep = "", stringsAsFactors = FALSE,
+                 check.names = FALSE, comment.char = "")
+
+missing_cols <- setdiff(gwas_cols, names(df))
+if (length(missing_cols) > 0) {
+  stop("Missing expected columns: ", paste(missing_cols, collapse = ", "))
+}
+
+df <- df[, gwas_cols]
 head(df)
 
 df <- df %>%
@@ -89,6 +96,15 @@ df <- df %>%
 
 df_clean <- df %>%
   filter(!is.na(P), P > 0, P <= 1)
+
+data_summary <- df_clean %>%
+  summarise(
+    valid_p_values = n(),
+    min_p_value = min(P),
+    bonferroni_threshold = 0.05 / n()
+  )
+
+data_summary
 
 df2 <- head(df_clean, 1000)
 head(df2)
@@ -105,11 +121,13 @@ head(ch6)
 
 ```
 
+After filtering out missing or invalid p-values, the dataset contains `r data_summary$valid_p_values` valid tests. The smallest raw p-value is `r signif(data_summary$min_p_value, 3)`, while the Bonferroni threshold for the full filtered dataset is `r signif(data_summary$bonferroni_threshold, 3)`. This means that even the strongest raw association in this file does not pass a full-data Bonferroni correction.
+
 # Creating Manhattan Plots
 
 Because I will be making several Manhattan, QQ, and adjusted p-value plots, I created reusable plotting functions. This keeps the visual style consistent and makes it easier to compare results across FDR methods.
 
-```{r manhattan plot function}
+```{r manhattan plot function, include=FALSE}
 prepare_manhattan_data <- function(df,
                                    chrom_col = "#CHROM",
                                    pos_col = "POS",
@@ -235,7 +253,7 @@ plot_qq <- function(p_values, plot_title, plot_subtitle = NULL) {
 
 ```
 
-```{r testing function, echo = TRUE, message = FALSE, warning = FALSE}
+```{r testing function, echo = FALSE, message = FALSE, warning = FALSE}
 plot_manhattan(
   df3,
   threshold = 0.05,
@@ -246,7 +264,7 @@ plot_manhattan(
 
 The first plot uses the raw p-values from the 100,000-SNP sample and overlays a Bonferroni threshold. This is a useful baseline because it shows how stringent family-wise error control becomes in a GWAS setting.
 
-```{r raw 100k bonferroni, echo = TRUE, message = FALSE, warning = FALSE}
+```{r raw 100k bonferroni, echo = FALSE, message = FALSE, warning = FALSE}
 df3_clean <- df3 %>%
   filter(!is.na(P))
 bonferroni_threshold <- 0.05 / nrow(df3_clean)
@@ -261,7 +279,7 @@ plot_manhattan(
 
 ```
 
-```{r chromosome 6 raw pvalues, echo = TRUE, message = FALSE, warning = FALSE}
+```{r chromosome 6 raw pvalues, echo = FALSE, message = FALSE, warning = FALSE}
 
 ch6_clean <- ch6 %>%
   filter(!is.na(P))
@@ -286,7 +304,7 @@ plot_qq(
 )
 ```
 
-```{r qqplot 100k, echo = TRUE, message = FALSE, warning = FALSE}
+```{r qqplot 100k, echo = FALSE, message = FALSE, warning = FALSE}
 plot_qq(
   df3_clean$P,
   plot_title = "QQ plot of raw GWAS p-values",
@@ -294,7 +312,7 @@ plot_qq(
 )
 ```
 
-```{r qqplot chr6, echo = TRUE, message = FALSE, warning = FALSE}
+```{r qqplot chr6, echo = FALSE, message = FALSE, warning = FALSE}
 plot_qq(
   ch6_clean$P,
   plot_title = "QQ plot of chromosome 6 p-values",
@@ -310,7 +328,7 @@ Now I will be trying different FDR methods, from most to least conservative.
 
 Out of the p-value adjustment methods, Benjamini Yekuteli is the most conservative, so I will try it first. R has a `p.adjust` function that can automatically apply the BY method.
 
-```{r Benjamini-Yekutieli test, echo = TRUE, message = FALSE, warning = FALSE}
+```{r Benjamini-Yekutieli test, echo = FALSE, message = FALSE, warning = FALSE}
 
 df3_clean$P_BY <- p.adjust(df3_clean$P, method = "BY")
 
@@ -330,7 +348,7 @@ plot_adjusted_pvalues(
 
 Because BY-adjusted p-values are adjusted significance values rather than raw association p-values, I plot them on the adjusted p-value scale instead of forcing them into a standard Manhattan plot.
 
-```{r BY plot test, echo = TRUE, message = FALSE, warning = FALSE}
+```{r BY plot test, echo = FALSE, message = FALSE, warning = FALSE}
 plot_adjusted_pvalues(
   df3_clean,
   pval_col = "P_BY",
@@ -339,20 +357,20 @@ plot_adjusted_pvalues(
 )
 ```
 
-Using my new and improved plotting function, we can see that because the Benjamini-Yekutieli method is so conservative, all of the p-values were adjusted to 1.
+Using this adjusted p-value plot, we can see that the Benjamini-Yekutieli method is highly conservative for this dataset. In the 100,000-SNP sample, it does not identify any variants below an FDR threshold of 0.05.
 
 ## Benjamini-Hochberg
 
 Now I will try adjust my p-values using the Benjamini-Hochberg method.
 
-```{r Benjamini-Hochberg test, echo = TRUE, message = FALSE, warning = FALSE}
+```{r Benjamini-Hochberg test, echo = FALSE, message = FALSE, warning = FALSE}
 # Adjusting p_values using BH
 df3_clean$P_BH <- p.adjust(df3_clean$P, method = "BH")
 
 #Summary stats of adjusted p-values
 summary(df3_clean$P_BH)
 
-df3_bh_sig <- df3_clean %>% filter(P_BH < 0.05) #there are no significant p-values after BH adjustment 
+df3_bh_sig <- df3_clean %>% filter(P_BH < 0.05)
 df3_clean$log10_P_BH <- -log10(df3_clean$P_BH)
 
 plot_adjusted_pvalues(
@@ -366,7 +384,7 @@ plot_adjusted_pvalues(
 ```
 
 
-```{r BH plot test, echo = TRUE, message = FALSE, warning = FALSE}
+```{r BH plot test, echo = FALSE, message = FALSE, warning = FALSE}
 plot_adjusted_pvalues(
   df3_clean,
   pval_col = "P_BH",
@@ -430,7 +448,7 @@ plot_adjusted_pvalues(
 
 ```
 
-```{r BKY plot test, echo = TRUE, message = FALSE, warning = FALSE}
+```{r BKY plot test, echo = FALSE, message = FALSE, warning = FALSE}
 plot_adjusted_pvalues(
   df3_clean,
   pval_col = "P_BKY",
@@ -438,12 +456,13 @@ plot_adjusted_pvalues(
   plot_subtitle = "Dashed line marks FDR = 0.05"
 )
 ```
-This time, I was able to isolate around 300 significant SNPs using the BYK method. However, they were all the same p-value. Therefore, while BYK is able to separate  
+Because BKY estimates the number of true null hypotheses before applying its second-stage threshold, it can be slightly less conservative than the standard BH procedure. In this sample, the important comparison is the number of discoveries, not just whether the adjusted p-values look visually separated on the plot.
+
 ## Storey-Tibshirani (q-value)
 
 Now I will be adjusting my p-values using the Storey-Tibshirani method [6]. Thankfully, there is a package in R that was designed in collaboration with the creators of this method, the `qvalue` package. I followed the documentation of the `qvalue` package to use the `qvalue()` method and other methods on my data [7].
 
-```{r, echo = TRUE, message = FALSE, warning = FALSE}
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
 qobj <- qvalue(p = df3_clean$P)  # estimating pi_0 and q-values
 df3_clean$q_value <- qobj$qvalues
 
@@ -454,30 +473,57 @@ qobj$pi0
 
 ```
 
-Unfortunately, I was not able to actually find any significant q_values. My pi_0 was 0.971, which means that 97.1% of the tested SNPs are estimated to be null.
+The Storey-Tibshirani q-value method estimates the proportion of true null hypotheses before calculating q-values. In my run, the estimated pi_0 was 0.971, meaning that about 97.1% of the tested SNPs were estimated to be null.
 
-```{r best BKYs, echo = TRUE, message = FALSE, warning = FALSE}
+```{r FDR summary table, echo = FALSE, message = FALSE, warning = FALSE}
+fdr_summary <- tibble(
+  method = c("Benjamini-Yekutieli", "Benjamini-Hochberg",
+             "Benjamini-Krieger-Yekutieli", "Storey-Tibshirani q-value"),
+  significant_variants = c(
+    nrow(df3_by_sig),
+    nrow(df3_bh_sig),
+    nrow(df3_bky_sig),
+    nrow(df3_q_sig)
+  )
+)
+
+knitr::kable(fdr_summary, col.names = c("Method", "Variants below 0.05"))
+```
+
+Overall, the different FDR approaches tell a consistent story: after correcting for multiple testing, the 100,000-SNP sample does not provide strong evidence for a large number of robust associations. This does not mean that the original study has no signal. It means that a random subset of the full GWAS is best used here as a method comparison, while definitive association claims should be made from the full dataset.
+
+```{r best BKYs, echo = FALSE, message = FALSE, warning = FALSE}
 top_bky <- df3_clean %>%
   arrange(P) %>%
   slice(1:50) %>%
   select(`#CHROM`, POS, ID, P, P_BKY)
 
+top_chr6_candidate <- ch6_clean %>%
+  arrange(P) %>%
+  slice(1) %>%
+  select(`#CHROM`, POS, ID, P)
+
+top_chr6_candidate
 ```
 
-Taking a second look at the p-values that were marked as being signficant from BYK, they appear to be randomly clustered throughout the genome. However, the second most significant SNP is located on chromosome 6, the same chromosome as the HLA gene cluster that was found to be significant in the original study. So, I think to conclude, I will try to figure out where this SNP is located and its potential biological function.
+Taking a second look at the smallest raw p-values, there is at least one chromosome 6 candidate worth inspecting because chromosome 6 contains the HLA region, which was important in the original study. I would treat this as an exploratory follow-up rather than a confirmed discovery from this project alone.
 
-SNP POS: 129948488
-#CHROM: 6
+Top chromosome 6 candidate in the full chromosome 6 subset:
 
-I used the NCBI Human Genome Data Viewer [8] to figure out the genomic context of chr6:129948488. This SNP lies within an intron region of L3MBTL3, situated between a nearby HLA class II gene and an uncharacterized gene. L3MBTL3  has been implicated in several GWAS as influencing hematopoietic traits and immunoglobulin A (IgA) levels. Variants in L3MBTL3 have been associated with natural variation in IgA concentrations, suggesting a potential role in humoral immune regulation. These findings suggest that SNPs in or near L3MBTL3 could indirectly modulate immune responses, potentially by influencing the development or regulation of immune effector cells [9].
+- Chromosome: `r top_chr6_candidate[["#CHROM"]][1]`
+- Position: `r top_chr6_candidate$POS[1]`
+- SNP ID: `r top_chr6_candidate$ID[1]`
+- Raw p-value: `r signif(top_chr6_candidate$P[1], 3)`
 
-Therefore, while I was not able to identify a clear enrichment of significant SNPs in known immune loci across the genome, I was able to pinpoint at least one biologically plausible candidate. Its proximity to the HLA region and its known association with immune-related traits make it a promising lead for further investigation. Further analysis of the SNPs that were flagged as being significant by the BKY method should be looked into, as they may represent novel loci of biological relevance that have not yet been characterized in the context of immune response by the original study.
+I used the NCBI Human Genome Data Viewer [8] as a first-pass way to inspect candidate genomic context. The biological interpretation should remain conservative unless the genome build, SNP ID, and nearest-gene annotation are confirmed from the same reference build used in the GWAS summary statistics. If the top chromosome 6 signal maps near immune-related loci, it would be a reasonable candidate for follow-up, but the evidence here is not strong enough to claim a novel immune-response locus.
+
+Therefore, my conclusion is that the FDR method choice strongly changes the apparent number of discoveries, especially when moving from raw p-values to multiple-testing-adjusted results. BY and BH are conservative in this sample, Storey's q-value approach estimates that most tests are null, and BKY provides an adaptive comparison point. The strongest portfolio-level result is the statistical comparison itself: this project shows why multiple-testing correction is necessary in GWAS and why candidate SNP interpretation has to be tied to corrected significance, genome build, and biological annotation.
 
 
 #Misc graphs
 
 
-```{r normal distribution testing, echo = TRUE, message = FALSE, warning = FALSE}
+```{r normal distribution testing, echo = FALSE, message = FALSE, warning = FALSE}
 df3_clean$logP <- -log10(df3_clean$P)
 
 
@@ -498,7 +544,7 @@ ggplot(df3_clean, aes(x = -log10(P))) +
 
 ```
 
-```{r normal dist curve, echo = TRUE, message = FALSE, warning = FALSE}
+```{r normal dist curve, echo = FALSE, message = FALSE, warning = FALSE}
 #To create figure in slide deck
 x <- seq(-4, 4, length.out = 1000)
 y <- dnorm(x)
@@ -528,9 +574,9 @@ ggplot(df_norm, aes(x, y)) +
 
 [1] https://www.milieuinterieur.fr/en/about-us/the-milieu-interieur/
 
-[2]Scepanovic, P., Alanio, C., Hammer, C., et al. (2018). Human genetic variants and age are the strongest predictors of humoral immune responses to common pathogens and vaccines. Genome Medicine, 10, 59. https://doi.org/10.1186/s13073-018-0568-8
+[2] Scepanovic, P., Alanio, C., Hammer, C., et al. (2018). Human genetic variants and age are the strongest predictors of humoral immune responses to common pathogens and vaccines. Genome Medicine, 10, 59. https://doi.org/10.1186/s13073-018-0568-8
 
-[3] https://www.rdocumentation.org/packages/qqman/versions/0.1.2/topics/manhattan
+[3] Wickham, H. (2016). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York. https://ggplot2.tidyverse.org/
 
 [4] https://search.r-project.org/CRAN/refmans/mutoss/html/multiple.down.html
 
@@ -541,5 +587,3 @@ ggplot(df_norm, aes(x, y)) +
 [7] https://www.rdocumentation.org/packages/qvalue/versions/2.4.2/topics/qvalue
 
 [8] https://www.ncbi.nlm.nih.gov/gdv/
-
-[9] Arai S, Miyazaki T. Impaired maturation of myeloid progenitors in mice lacking novel Polycomb group protein MBT-1. EMBO J. 2005 May 18;24(10):1863-73. doi: 10.1038/sj.emboj.7600654 
