@@ -39,11 +39,7 @@ knitr::opts_chunk$set(echo = TRUE, message= FALSE, warning=TRUE)
 knitr::opts_chunk$set(fig.width=12, fig.height=8) 
 
 library(tidyverse)
-library(tidyr)
-library(dplyr)
-library(ggplot2)
 library(qqman)
-library(mutoss)
 library(qvalue)
 ```
 
@@ -56,27 +52,45 @@ library(qvalue)
 #df3 contains 100,000 random snps, used as an analogue for the entire data set
 #ch6 contains the 354095 snps identified on chromosome 6
 
-#reloading the 'df' dataframe takes a long time because of the number of observations 
-df <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE)
-colnames(df) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+gwas_cols <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ",
+               "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+
+data_path <- Sys.getenv("GWAS_DATA_PATH", unset = "HBV_HBc_GWAS_serostatus.txt")
+
+if (!file.exists(data_path)) {
+  stop(
+    "Could not find the GWAS input file. Place HBV_HBc_GWAS_serostatus.txt ",
+    "in the project root, or set GWAS_DATA_PATH to its location."
+  )
+}
+
+# Reloading the full dataframe takes a long time because of the number of observations.
+df <- read.table(data_path, header = FALSE, sep = "", stringsAsFactors = FALSE)
+colnames(df) <- gwas_cols
 head(df)
 
-df2 <- read.table("/Users/arkeshdas/Documents/CMSE 410/repos/HBV_HBc_GWAS_serostatus.txt", header = FALSE, sep = "", stringsAsFactors = FALSE, nrows = 1000)
-colnames(df2) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+df <- df %>%
+  mutate(
+    `#CHROM` = as.integer(`#CHROM`),
+    POS = as.numeric(POS),
+    P = as.numeric(P)
+  )
+
+df_clean <- df %>%
+  filter(!is.na(P), P > 0, P <= 1)
+
+df2 <- head(df_clean, 1000)
 head(df2)
 
 set.seed(03302025)  # Setting seed for reproducibility for df3
-df3 <- df[sample(nrow(df), 100000), ]
-colnames(df3) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+sample_size <- min(100000, nrow(df_clean))
+df3 <- df_clean[sample(nrow(df_clean), sample_size), ]
+colnames(df3) <- gwas_cols
 head(df3)
 
-ch6 <- df %>% filter(`#CHROM` == 6)
-
-colnames(ch6) <- c("#CHROM", "POS", "ID", "REF", "ALT", "ALT_FREQ", "TEST", "OBS_CT", "OR", "SE", "T_STAT", "P")
+ch6 <- df_clean %>% filter(`#CHROM` == 6)
+colnames(ch6) <- gwas_cols
 head(ch6)
-
-df_clean <- df %>%
-  filter(!is.na(P))
 
 ```
 
@@ -327,24 +341,29 @@ bky_result <- mutoss::runMethod("BKY", list(pValues = df3_clean$P, alpha = 0.05)
 Unfortunately, I could not get the `mutoss` package's implementation of BKY to work, so I will instead follow the original 2006 paper [5], which describes how to implement the BKY method:
 
 ```{r BKY implementation}
-#BYK function
+# BKY two-stage adaptive FDR adjustment.
 bky_adjust <- function(p, alpha = 0.05) {
-  m <- length(p)
-  p_order <- order(p)
-  p_sorted <- p[p_order]
-  k <- m:1
-  c_m <- sum(1 / (1:m))
-  
-  thresh <- (k / m) * (alpha / (1 + alpha)) * (1 / c_m)
-  test <- p_sorted <= thresh
-  max_k <- if (any(test)) max(which(test)) else 0
-  
-  adjusted <- rep(1, m)
-  if (max_k > 0) {
-    adjusted[p_order[1:max_k]] <- pmin(1, thresh[max_k])
+  valid <- !is.na(p)
+  adjusted <- rep(NA_real_, length(p))
+  p_valid <- p[valid]
+  m <- length(p_valid)
+
+  if (m == 0) {
+    return(adjusted)
   }
-  
-  return(adjusted)
+
+  stage_one_alpha <- alpha / (1 + alpha)
+  stage_one_reject <- p.adjust(p_valid, method = "BH") <= stage_one_alpha
+  r1 <- sum(stage_one_reject)
+
+  if (r1 == 0) {
+    adjusted[valid] <- 1
+    return(adjusted)
+  }
+
+  m0_hat <- max(1, m - r1)
+  adjusted[valid] <- pmin(1, p.adjust(p_valid, method = "BH") * (m0_hat / m))
+  adjusted
 }
 
 # Applying BKY to the data
@@ -352,7 +371,8 @@ bky_adjust <- function(p, alpha = 0.05) {
 df3_clean$P_BKY <- bky_adjust(df3_clean$P, alpha = 0.05)
 df3_bky_sig <- df3_clean %>% filter(P_BKY < 0.05)
 
-summary(df3_bky_sig$P_BKY)
+summary(df3_clean$P_BKY)
+nrow(df3_bky_sig)
 
 # Plot
 manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BKY",
