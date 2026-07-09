@@ -39,8 +39,19 @@ knitr::opts_chunk$set(echo = TRUE, message= FALSE, warning=TRUE)
 knitr::opts_chunk$set(fig.width=12, fig.height=8) 
 
 library(tidyverse)
-library(qqman)
 library(qvalue)
+
+theme_gwas <- function(base_size = 12) {
+  theme_classic(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 2),
+      plot.subtitle = element_text(color = "gray30"),
+      axis.title = element_text(face = "bold"),
+      axis.text.x = element_text(size = base_size - 2),
+      panel.grid.major.y = element_line(color = "gray88", linewidth = 0.25),
+      legend.position = "none"
+    )
+}
 ```
 
 # Reading in the Data and making dataframes
@@ -96,123 +107,199 @@ head(ch6)
 
 # Creating Manhattan Plots
 
-Because I will be making many Manhattan plots, I initially decided to create a function that I can pass parameters into rather than creating a Manhattan plot by hand each time.
+Because I will be making several Manhattan, QQ, and adjusted p-value plots, I created reusable plotting functions. This keeps the visual style consistent and makes it easier to compare results across FDR methods.
 
 ```{r manhattan plot function}
-generate_manhattan_plot <- function(df, 
-                                    chrom_col = "#CHROM", 
-                                    pos_col = "POS", 
-                                    pval_col = "P", 
-                                    plot_title = "Manhattan Plot", 
-                                    pval_cutoff = 0.05) {
+prepare_manhattan_data <- function(df,
+                                   chrom_col = "#CHROM",
+                                   pos_col = "POS",
+                                   pval_col = "P") {
+  df_plot <- df %>%
+    mutate(
+      CHR = as.integer(gsub("[^0-9]", "", as.character(.data[[chrom_col]]))),
+      BP = as.numeric(.data[[pos_col]]),
+      p_value = as.numeric(.data[[pval_col]])
+    ) %>%
+    filter(!is.na(CHR), !is.na(BP), !is.na(p_value), p_value > 0, p_value <= 1) %>%
+    arrange(CHR, BP)
 
-  # Step 1: Normalize CHR and BP
-  df <- df %>%
-    mutate(CHR = gsub("chr", "", .data[[chrom_col]], ignore.case = TRUE),
-           CHR = gsub("[^0-9XYMT]", "", CHR),
-           CHR = as.character(CHR),
-           BP = as.numeric(.data[[pos_col]])) %>%
-    filter(!is.na(BP) & !is.na(CHR))
-
-  # Step 2: Sort
-  df <- df %>% arrange(as.numeric(CHR), BP)
-
-  # Step 3: Chromosome summary
-  df_chr <- df %>%
+  chr_offsets <- df_plot %>%
     group_by(CHR) %>%
-    summarise(max_bp = max(BP, na.rm = TRUE), .groups = "drop") %>%
-    arrange(as.numeric(CHR)) %>%
-    mutate(cumulative = cumsum(max_bp) - max_bp)
+    summarise(max_bp = max(BP), .groups = "drop") %>%
+    arrange(CHR) %>%
+    mutate(offset = lag(cumsum(max_bp), default = 0))
 
-  # Step 4: Merge
-  df <- df %>%
-    left_join(df_chr, by = "CHR") %>%
-    filter(!is.na(cumulative)) %>%
-    mutate(BP_cum = BP + cumulative)
+  df_plot %>%
+    left_join(chr_offsets, by = "CHR") %>%
+    mutate(BP_cum = BP + offset)
+}
 
-  # Step 5: Axis labels
-  axis_df <- df %>%
+get_axis_df <- function(df_plot) {
+  df_plot %>%
     group_by(CHR) %>%
     summarise(center = (min(BP_cum) + max(BP_cum)) / 2, .groups = "drop")
+}
 
-  # Step 6: Color map
-  chroms <- sort(unique(df$CHR))
-  chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
-  names(chrom_colors) <- chroms
+plot_manhattan <- function(df,
+                           chrom_col = "#CHROM",
+                           pos_col = "POS",
+                           pval_col = "P",
+                           plot_title = "Manhattan Plot",
+                           plot_subtitle = NULL,
+                           threshold = NULL,
+                           y_limit = NULL,
+                           highlight = NULL) {
+  df_plot <- prepare_manhattan_data(df, chrom_col, pos_col, pval_col)
+  axis_df <- get_axis_df(df_plot)
 
-  # Step 7: Manhattan Plot
-  ggplot(df, aes(x = BP_cum, y = -log10(.data[[pval_col]]))) +
-    geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
-    scale_color_manual(values = chrom_colors) +
-    scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
-    labs(x = "Chromosome", 
-         y = expression(-log[10](p-value)), 
-         title = plot_title) +
-    geom_hline(yintercept = -log10(pval_cutoff), linetype = "dashed", color = "red") +
-    theme_minimal() +
-    theme(legend.position = "none",
-          panel.border = element_blank(),
-          panel.grid.major.x = element_blank())
+  if (!is.null(highlight) && "ID" %in% names(df_plot)) {
+    df_plot <- df_plot %>% mutate(is_highlight = ID %in% highlight)
+  } else {
+    df_plot <- df_plot %>% mutate(is_highlight = FALSE)
+  }
+
+  p <- ggplot(df_plot, aes(x = BP_cum, y = -log10(p_value))) +
+    geom_point(aes(color = factor(CHR %% 2)), alpha = 0.65, size = 0.8) +
+    geom_point(data = filter(df_plot, is_highlight),
+               color = "#B23A48", size = 1.7, alpha = 0.95) +
+    scale_color_manual(values = c("#4A4A4A", "#2F80B7")) +
+    scale_x_continuous(breaks = axis_df$center, labels = axis_df$CHR,
+                       expand = expansion(mult = c(0.01, 0.01))) +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = "Chromosome",
+      y = expression(-log[10](p-value))
+    ) +
+    theme_gwas()
+
+  if (!is.null(threshold)) {
+    p <- p +
+      geom_hline(yintercept = -log10(threshold),
+                 color = "#B23A48", linetype = "dashed", linewidth = 0.5)
+  }
+
+  if (!is.null(y_limit)) {
+    p <- p + coord_cartesian(ylim = c(0, y_limit))
+  }
+
+  p
+}
+
+plot_adjusted_pvalues <- function(df,
+                                  pval_col,
+                                  plot_title,
+                                  plot_subtitle = NULL,
+                                  alpha = 0.05) {
+  df_plot <- prepare_manhattan_data(df, pval_col = pval_col)
+  axis_df <- get_axis_df(df_plot)
+
+  ggplot(df_plot, aes(x = BP_cum, y = p_value)) +
+    geom_point(aes(color = factor(CHR %% 2)), alpha = 0.6, size = 0.75) +
+    geom_hline(yintercept = alpha, color = "#B23A48",
+               linetype = "dashed", linewidth = 0.5) +
+    scale_color_manual(values = c("#4A4A4A", "#2F80B7")) +
+    scale_x_continuous(breaks = axis_df$center, labels = axis_df$CHR,
+                       expand = expansion(mult = c(0.01, 0.01))) +
+    coord_cartesian(ylim = c(0, 1)) +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = "Chromosome",
+      y = "Adjusted p-value"
+    ) +
+    theme_gwas()
+}
+
+plot_qq <- function(p_values, plot_title, plot_subtitle = NULL) {
+  p_values <- p_values[!is.na(p_values) & p_values > 0 & p_values <= 1]
+  n <- length(p_values)
+  qq_df <- tibble(
+    expected = -log10(ppoints(n)),
+    observed = -log10(sort(p_values))
+  )
+
+  ggplot(qq_df, aes(x = expected, y = observed)) +
+    geom_point(color = "#2F80B7", alpha = 0.55, size = 0.9) +
+    geom_abline(slope = 1, intercept = 0, color = "#B23A48",
+                linewidth = 0.55, linetype = "dashed") +
+    coord_equal() +
+    labs(
+      title = plot_title,
+      subtitle = plot_subtitle,
+      x = expression(Expected ~ -log[10](p-value)),
+      y = expression(Observed ~ -log[10](p-value))
+    ) +
+    theme_gwas()
 }
 
 ```
 
 ```{r testing function, echo = TRUE, message = FALSE, warning = FALSE}
-generate_manhattan_plot(df3, pval_cutoff = 0.05, plot_title = "Manhattan Plot of Raw P-values for 100,000 SNPs")
+plot_manhattan(
+  df3,
+  threshold = 0.05,
+  plot_title = "Raw GWAS associations in the 100,000-SNP sample",
+  plot_subtitle = "Dashed line marks the uncorrected p = 0.05 threshold"
+)
 ```
 
-However, after doing some research, I learned there are already existing functions that create Manhattan plots (`qqman` library), so I will be using this function to create my Manhattan plots instead [3].
+The first plot uses the raw p-values from the 100,000-SNP sample and overlays a Bonferroni threshold. This is a useful baseline because it shows how stringent family-wise error control becomes in a GWAS setting.
 
-```{r qqman 100k Bonferroni, echo = TRUE, message = FALSE, warning = FALSE}
+```{r raw 100k bonferroni, echo = TRUE, message = FALSE, warning = FALSE}
 df3_clean <- df3 %>%
   filter(!is.na(P))
-manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", suggestiveline = FALSE,
-          genomewideline = -log10(2.7e-09), ylim = c(0, 10)) 
-title(main = "Manhattan Plot of Raw P-values for 100,000 SNPs Bonferroni")
-abline(h = -log10(9.5e-09), col = "darkgreen", lty = 3)
+bonferroni_threshold <- 0.05 / nrow(df3_clean)
+
+plot_manhattan(
+  df3_clean,
+  threshold = bonferroni_threshold,
+  y_limit = 10,
+  plot_title = "Raw GWAS associations with Bonferroni threshold",
+  plot_subtitle = paste0("Threshold: 0.05 / ", nrow(df3_clean), " tests")
+)
 
 ```
 
-```{r qqman ch6 0.05, echo = TRUE, message = FALSE, warning = FALSE}
+```{r chromosome 6 raw pvalues, echo = TRUE, message = FALSE, warning = FALSE}
 
 ch6_clean <- ch6 %>%
   filter(!is.na(P))
-manhattan(ch6_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P", highlight = "rs4254998",
-          genomewideline = -log10(0.05), ylim = c(0, 6)) 
-title(main = "Manhattan Plot of Raw P-values for Chr. 6 SNPs p = 0.05")
+plot_manhattan(
+  ch6_clean,
+  threshold = 0.05,
+  y_limit = 6,
+  highlight = "rs4254998",
+  plot_title = "Raw GWAS associations on chromosome 6",
+  plot_subtitle = "rs4254998 is highlighted; dashed line marks p = 0.05"
+)
 ```
 # QQ plots
 
-I tried to create my code to create a QQ plot before I realized that there already is one in `qqman`
+QQ plots are useful here because they compare the observed p-value distribution with what would be expected under the global null hypothesis. Large departures from the diagonal can indicate true association signal, inflation, or population structure that still needs to be checked.
 
 ```{r QQ plot for subset}
-pvals <- df3$P
-pvals <- pvals[!is.na(pvals)]
-
-n <- length(pvals)
-
-expected <- -log10(ppoints(n))
-observed <- -log10(sort(pvals))
-
-plot(expected, observed,
-     pch = 19,
-     col = rgb(0, 0, 0, 0.5),
-     cex = 0.6,
-     xlab = "Expected -log10(p)",
-     ylab = "Observed -log10(p)",
-     main = "QQ Plot of GWAS P-values")
-
-abline(0, 1, col = "red", lwd = 2)
-
-
+plot_qq(
+  df3$P,
+  plot_title = "QQ plot of raw GWAS p-values",
+  plot_subtitle = "100,000-SNP sample"
+)
 ```
 
 ```{r qqplot 100k, echo = TRUE, message = FALSE, warning = FALSE}
-qq(df3_clean$P, main = "QQ Plot of GWAS P-values for 100k SNPs")
+plot_qq(
+  df3_clean$P,
+  plot_title = "QQ plot of raw GWAS p-values",
+  plot_subtitle = "After filtering missing or invalid p-values"
+)
 ```
 
 ```{r qqplot chr6, echo = TRUE, message = FALSE, warning = FALSE}
-qq(ch6_clean$P, main = "QQ Plot of GWAS P-values for Chr. 6")
+plot_qq(
+  ch6_clean$P,
+  plot_title = "QQ plot of chromosome 6 p-values",
+  plot_subtitle = "Chromosome-specific subset"
+)
 ```
 
 # Various FDR methods
@@ -233,72 +320,23 @@ summary(df3_clean$P_BY)
 # Filter significant results under BY 
 df3_by_sig <- df3_clean %>% filter(P_BY < 0.05)
 
-manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BY", suggestiveline = FALSE, ylim = c(0,1)) 
-title(main = "Manhattan Plot of BY adjusted P-values for 100,000 SNPs")
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BY",
+  plot_title = "BY-adjusted p-values across the genome",
+  plot_subtitle = "Dashed line marks FDR = 0.05"
+)
 ```
 
-I cannot visualize the BY-adjusted p-values using my Manhattan Plot. In this case, I can thankfully modify and re-use my plotting function from earlier:
-
-```{r plot function, echo = TRUE, message = FALSE, warning = FALSE}
-generate_plot <- function(df, 
-                                    chrom_col = "#CHROM", 
-                                    pos_col = "POS", 
-                                    pval_col = "P", 
-                                    plot_title = "Plot") {
-
-  # Step 1: Normalize CHR and BP
-  df <- df %>%
-    mutate(CHR = gsub("chr", "", .data[[chrom_col]], ignore.case = TRUE),
-           CHR = gsub("[^0-9XYMT]", "", CHR),
-           CHR = as.character(CHR),
-           BP = as.numeric(.data[[pos_col]])) %>%
-    filter(!is.na(BP) & !is.na(CHR))
-
-  # Step 2: Sort
-  df <- df %>% arrange(as.numeric(CHR), BP)
-
-  # Step 3: Chromosome summary
-  df_chr <- df %>%
-    group_by(CHR) %>%
-    summarise(max_bp = max(BP, na.rm = TRUE), .groups = "drop") %>%
-    arrange(as.numeric(CHR)) %>%
-    mutate(cumulative = cumsum(max_bp) - max_bp)
-
-  # Step 4: Merge
-  df <- df %>%
-    left_join(df_chr, by = "CHR") %>%
-    filter(!is.na(cumulative)) %>%
-    mutate(BP_cum = BP + cumulative)
-
-  # Step 5: Axis labels
-  axis_df <- df %>%
-    group_by(CHR) %>%
-    summarise(center = (min(BP_cum) + max(BP_cum)) / 2, .groups = "drop")
-
-  # Step 6: Color map
-  chroms <- sort(unique(df$CHR))
-  chrom_colors <- rep(c("grey", "skyblue"), length.out = length(chroms))
-  names(chrom_colors) <- chroms
-
-  # Step 7: Plot
-  ggplot(df, aes(x = BP_cum, y = .data[[pval_col]])) +
-    geom_point(aes(color = CHR), alpha = 0.75, size = 1.3) +
-    scale_color_manual(values = chrom_colors) +
-    scale_x_continuous(label = axis_df$CHR, breaks = axis_df$center) +
-    ylim(0,1)+
-    labs(x = "Chromosome", 
-         y = 'p-value', 
-         title = plot_title) +
-    theme_minimal() +
-    theme(legend.position = "none",
-          panel.border = element_blank(),
-          panel.grid.major.x = element_blank())
-}
-
-```
+Because BY-adjusted p-values are adjusted significance values rather than raw association p-values, I plot them on the adjusted p-value scale instead of forcing them into a standard Manhattan plot.
 
 ```{r BY plot test, echo = TRUE, message = FALSE, warning = FALSE}
-generate_plot(df3_clean, pval_col = "P_BY", plot_title = "Plot of BY adjusted P-values for 100,000 SNPs")
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BY",
+  plot_title = "BY-adjusted p-values across the genome",
+  plot_subtitle = "Most adjusted values are near 1, reflecting the conservatism of BY"
+)
 ```
 
 Using my new and improved plotting function, we can see that because the Benjamini-Yekutieli method is so conservative, all of the p-values were adjusted to 1.
@@ -317,15 +355,24 @@ summary(df3_clean$P_BH)
 df3_bh_sig <- df3_clean %>% filter(P_BH < 0.05) #there are no significant p-values after BH adjustment 
 df3_clean$log10_P_BH <- -log10(df3_clean$P_BH)
 
-manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BH", suggestiveline = FALSE, ylim = c(0, 0.005)) 
-title(main = "Plot of BH adjusted P-values for 100,000 SNPs")
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BH",
+  plot_title = "BH-adjusted p-values across the genome",
+  plot_subtitle = "Dashed line marks FDR = 0.05"
+)
 
 
 ```
 
 
 ```{r BH plot test, echo = TRUE, message = FALSE, warning = FALSE}
-generate_plot(df3_clean, pval_col = "P_BH", plot_title = "Plot of BH adjusted P-values for 100,000 SNPs")
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BH",
+  plot_title = "BH-adjusted p-values across the genome",
+  plot_subtitle = "BH is less conservative than BY, but still controls FDR"
+)
 ```
 
 ## Benjamini-Krieger-Yekutieli 
@@ -374,15 +421,22 @@ df3_bky_sig <- df3_clean %>% filter(P_BKY < 0.05)
 summary(df3_clean$P_BKY)
 nrow(df3_bky_sig)
 
-# Plot
-manhattan(df3_clean, chr = "#CHROM", bp = "POS", snp = "ID", p = "P_BKY",
-          suggestiveline = FALSE)
-title(main = "Plot of BKY Adjusted P-values for 100,000 SNPs")
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BKY",
+  plot_title = "BKY-adjusted p-values across the genome",
+  plot_subtitle = "Two-stage adaptive FDR adjustment"
+)
 
 ```
 
-```{r BYK plot test, echo = TRUE, message = FALSE, warning = FALSE}
-generate_plot(df3_clean, pval_col = "P_BKY", plot_title = "Plot of BKY adjusted P-values for 100,000 SNPs")
+```{r BKY plot test, echo = TRUE, message = FALSE, warning = FALSE}
+plot_adjusted_pvalues(
+  df3_clean,
+  pval_col = "P_BKY",
+  plot_title = "BKY-adjusted p-values across the genome",
+  plot_subtitle = "Dashed line marks FDR = 0.05"
+)
 ```
 This time, I was able to isolate around 300 significant SNPs using the BYK method. However, they were all the same p-value. Therefore, while BYK is able to separate  
 ## Storey-Tibshirani (q-value)
@@ -428,17 +482,19 @@ df3_clean$logP <- -log10(df3_clean$P)
 
 
 ggplot(df3_clean, aes(x = -log10(P))) +
-  geom_histogram(bins = 50, fill = "skyblue", color = "white") +
-  labs(title = "Distribution of –log10(P-values)",
-       x = "–log10(P-value)", y = "Count") +xlim(0, 4) 
-  theme_minimal()
+  geom_histogram(bins = 50, fill = "#2F80B7", color = "white") +
+  coord_cartesian(xlim = c(0, 4)) +
+  labs(title = "Distribution of -log10(p-values)",
+       x = expression(-log[10](p-value)), y = "SNP count") +
+  theme_gwas()
 
 
 ggplot(df3_clean, aes(x = -log10(P))) +
-  geom_histogram(bins = 50, fill = "skyblue", color = "white") +
-  labs(title = "Distribution of –log10(P-values)",
-       x = "–log10(P-value)", y = "Count") +xlim(2, 4) 
-  theme_minimal()
+  geom_histogram(bins = 50, fill = "#2F80B7", color = "white") +
+  coord_cartesian(xlim = c(2, 4)) +
+  labs(title = "Right tail of -log10(p-values)",
+       x = expression(-log[10](p-value)), y = "SNP count") +
+  theme_gwas()
 
 ```
 
@@ -455,15 +511,16 @@ shade_df <- subset(df_norm, x > z_cutoff)
 
 
 ggplot(df_norm, aes(x, y)) +
-  geom_line(color = "black", size = 1) +  # Normal curve
-  geom_area(data = shade_df, aes(x, y), fill = "skyblue", alpha = 0.6) + 
-  geom_vline(xintercept = z_cutoff, color = "red", linetype = "dashed", size = 1) +  
+  geom_line(color = "black", linewidth = 0.8) +
+  geom_area(data = shade_df, aes(x, y), fill = "#2F80B7", alpha = 0.55) +
+  geom_vline(xintercept = z_cutoff, color = "#B23A48",
+             linetype = "dashed", linewidth = 0.6) +
   labs(
     title = "Standard Normal Distribution with One-Sided p = 0.05 Cutoff",
     x = "Z-score",
     y = "Density"
   ) +
-  theme_minimal()
+  theme_gwas()
 
 ```
 
